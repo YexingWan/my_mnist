@@ -1,33 +1,23 @@
 import numpy as np
 import scipy.signal as signal
 from skimage.measure import block_reduce
-from statistics import stdev
+import os
+import argparse
 
 
 class My_mnist():
 
-    def __init__(self,X,Y,test_X,test_Y,batch_size=512,lr=0.0001,C = 0.0005,momentum = 0.9):
-        # X.shape: (num,channel,h,w)
-        idx = np.random.permutation(X.shape[0])
-        self._X = X[idx]
-        #Y is label from 0 to number of classes
-        self._Y = Y[idx]
-
-        self._test_X = test_X
-        self._test_Y = test_Y
+    def __init__(self,batch_size=512,lr=0.001,C = 0.0005,momentum = 0.9):
 
         self._C = C
         self._momentum = momentum
         self._lr = lr
         self._batch_size = batch_size
-
-
-
-
         self._loss = []
 
+
         # weight_shape:(output_channel,input_channel,h,w)
-        self.__w1 = np.random.normal(0.01,np.sqrt(2. / 784),(32,1,3,3))
+        self.__w1 = np.random.normal(0.001,np.sqrt(2. / 784),(32,1,3,3))
         self.__feature_conv1_nopool = None
         self.__maxpooling1_mask = None
         self.__feature_conv1 = None
@@ -40,12 +30,10 @@ class My_mnist():
         # self.__w3 = np.random.normal(0.001,np.sqrt(2/392),(8,16,3,3))
         # self.__feature_conv3 = None
 
-        #self.__dense_w = np.random.normal(0.001,np.sqrt(2/10),(16*14*14,10))
-
         #self.__dense_w1 = np.random.normal(0.1, 1, (16*14*14,256))
         #self.__dense_w2 = np.random.normal(0.1, 1, (256, 10))
-        self.__dense_w1 =np.random.normal(0.01,np.sqrt(2. / 6272),(32*14*14,256))
-        self.__dense_w2 =np.random.normal(0.01,np.sqrt(2. / 256),(256, 10))
+        self.__dense_w1 =np.random.normal(0.001,np.sqrt(2. / 6272),(32*14*14,256))
+        self.__dense_w2 =np.random.normal(0.001,np.sqrt(2. / 256),(256, 10))
 
 
         self.__weight_list = []
@@ -56,14 +44,6 @@ class My_mnist():
 
         self.__gradient_list = [0] * len(self.__weight_list)
         self.__accumulated_momemtum = [0] * len(self.__weight_list)
-
-
-        # self.__accumulated_momemtum = [0]*len(self.__weight_list)
-        #
-        # self.__feature1 = None
-        # self.__feature2 = None
-
-
 
 
     def __conv(self,input_m,weight):
@@ -87,7 +67,6 @@ class My_mnist():
 
 
     def __softmax(self,input_m):
-        #input.shape: (batch_size, class_num)
         max = np.max(input_m,axis=1).reshape(-1,1)
         exp = np.exp(input_m - max)
         s = np.sum(exp,axis=1).reshape((-1,1))
@@ -98,10 +77,9 @@ class My_mnist():
         # predict_Y is one-hot encoded, origin batch Y is label from 0 to predict_Y.shape[1] (number of classes)
         assert(batch_pred.shape[0]==batch_Y.shape[0])
         m = batch_pred.shape[0]
-        log_p = np.log2(np.clip(batch_pred, 1e-14, 1))
+        log_p = np.log2(np.clip(batch_pred, 1e-12, 1))
         # loss = (-1/m)*(np.sum(log_p[range(len(batch_Y)), batch_Y]))+self._C * 2 * np.sqrt(np.sum(np.square(self.__w1))+np.sum(np.square(self.__w2))+np.sum(np.square(self.__w3))+np.sum(np.square(self.__dense_w)))
         loss = (-1 / m) * np.sum(log_p[range(len(batch_Y)), batch_Y])
-
         return loss
 
 
@@ -124,16 +102,13 @@ class My_mnist():
 
 
     def __gradient_fc_w(self,next_grad,feature):
-          #p = self.__feature_conv3.shape[1]*self.__feature_conv3.shape[2]*self.__feature_conv3.shape[3]
-          #features = self.__feature_conv3.reshape(-1, p)
-          return feature.T.dot(next_grad)
+        return feature.T.dot(next_grad)
 
 
     def __gradient_fc_x(self, weight,next_gard):
         return next_gard.dot(weight.T)
 
 
-    # 返回输入ReLU前的参数对loss的梯度
     def __gradient_relu(self,o,next_grad):
         grad = np.array(o > 0, dtype=int) * next_grad
         return grad
@@ -141,8 +116,6 @@ class My_mnist():
     def __gradient_maxpooling(self,mask,next_grad):
         g  = next_grad.repeat(2,2).repeat(2,3)
         return g*mask
-
-
 
     '''
     计算卷积kernel对loss的梯度
@@ -156,15 +129,14 @@ class My_mnist():
         grad = np.empty(weight_shape)
         if weight_shape[2] != 1:
             inputs = np.pad(inputs, ((0, 0),(0, 0), (1,1), (1, 1)), 'constant')
-        for k in range(weight_shape[0]):
-            #for c in range(weight_shape[1]):
-            for h in range(weight_shape[2]):
-                for w in range(weight_shape[3]):
-                    offset = (weight_shape[2] - h - 1, weight_shape[3] - w - 1)
-                    related = inputs[:, :, h:(inputs.shape[2] - offset[0]),w:(inputs.shape[3] - offset[1])] #(batch_size,1,f_size,f_size)
-                    #第K个kernel上的每个weight对应output上第K个channel的所有点都有独立的梯度
-                    grad[k, :, h, w] = (related * next_grad[:,k].reshape(self._batch_size,1,next_grad.shape[2],next_grad.shape[3]) ).sum(axis = (0,2,3))
 
+        for h in range(weight_shape[2]):
+            for w in range(weight_shape[3]):
+                offset = (weight_shape[2] - h - 1, weight_shape[3] - w - 1)
+                related = inputs[:, :, h:(inputs.shape[2] - offset[0]),w:(inputs.shape[3] - offset[1])]
+                for k in range(weight_shape[0]):
+                    #第K个kernel上的每个weight对应output上第K个channel的所有点都有独立的梯度
+                     grad[k, :, h, w] = (related * next_grad[:,k].reshape(next_grad.shape[0],1,next_grad.shape[2],next_grad.shape[3]) ).sum(axis = (0,2,3))
         return grad
 
 
@@ -174,7 +146,6 @@ class My_mnist():
         for c in range(sample_shape[1]):
             roted_kernel = np.rot90(weight[:,c],2,axes=(1,2))[np.newaxis,:,:,:]
             grad[:, c] = self.__conv(next_grad, roted_kernel).squeeze(axis=1)
-
         return grad
 
     def __forward_pass(self, batch):
@@ -191,7 +162,7 @@ class My_mnist():
         #self.__feature_conv3 = self.__ReLU(self.__conv(self.__feature_conv2, self.__w3))
         #self.__feature_conv3 = self.__ReLU(self.__conv(self.__feature_conv1, self.__w3))
 
-        reshaped_feature_conv_1 = np.reshape(self.__feature_conv1,(self._batch_size,-1))
+        reshaped_feature_conv_1 = np.reshape(self.__feature_conv1,(self.__feature_conv1.shape[0],-1))
         # 全连接
 
         # self.feature_dense = self.__fc(reshaped_feature_conv3, self.__dense_w)
@@ -207,7 +178,8 @@ class My_mnist():
 
 
 
-    def __test(self, test_X, test_Y):
+    def test(self, test_X, test_Y):
+        print('testing...')
         batch_num = len(test_Y) // self._batch_size
         loss = 0
         succ = 0
@@ -226,21 +198,25 @@ class My_mnist():
 
 
 
-    def train(self,epoch = 10):
-        batch_num = self._X.shape[0] // self._batch_size
-        for e in range(epoch):
+    def train(self,X,Y,test_X,test_Y,epoch = 30,save = False):
+
+        idx = np.random.permutation(X.shape[0])
+        X = X[idx]
+        # Y is label from 0 to number of classes
+        Y = Y[idx]
+
+        batch_num = X.shape[0] // self._batch_size
+        for e in range(1,epoch+1):
+            if e%10==0:
+                self._lr *= 0.1
             print(f'running epoch {e}...')
             for n in range(batch_num):
-                print(f'batch{n}')
+                print(f'batch {n}/{batch_num}')
                 start = n * self._batch_size
                 end = (n + 1) * self._batch_size
-                #batch_X = np.reshape(self._X[start:end], (-1,self._X[start:end].shape[2] * self._X[start:end].shape[3]))
-                batch_X = self._X[start:end]
-                batch_Y = self._Y[start:end]
+                batch_X = X[start:end]
+                batch_Y = Y[start:end]
                 predict_Y = self.__forward_pass(batch_X)
-
-                # if n%5==0:
-                #     self.__test(self._test_X,self._test_Y)
 
                 gradient_output_dense_2_relu_as = self.__gradient_logit(batch_Y,predict_Y) #(256,10)
 
@@ -254,14 +230,14 @@ class My_mnist():
 
                 gradient_output_dense_1_as = self.__gradient_relu(o=self.__feature_dense_1, next_grad=gradient_output_dense_1_relu_as)
 
-                gradient_dense_w1 = self.__gradient_fc_w(next_grad=gradient_output_dense_1_as,feature = self.__feature_conv1.reshape(self._batch_size,-1))
+                gradient_dense_w1 = self.__gradient_fc_w(next_grad=gradient_output_dense_1_as,feature = self.__feature_conv1.reshape(self.__feature_conv1.shape[0],-1))
 
                 self.__gradient_list[1] = (gradient_dense_w1)
 
 
                 grad_output_conv1_maxpooling_as = self.__gradient_fc_x(next_gard=gradient_output_dense_1_as,weight=self.__dense_w1)
 
-                grad_output_conv1_maxpooling_as = grad_output_conv1_maxpooling_as.reshape((self._batch_size,
+                grad_output_conv1_maxpooling_as = grad_output_conv1_maxpooling_as.reshape(( self.__feature_conv1.shape[0],
                                                                                self.__feature_conv1.shape[1],
                                                                                self.__feature_conv1.shape[2],
                                                                                self.__feature_conv1.shape[3]))
@@ -279,74 +255,29 @@ class My_mnist():
                 self.__gradient_list[2] = gradient_w1
 
                 self.__back_prop()
-            self.__test(self._test_X, self._test_Y)
-
-                # grad_output_conv2_maxpooling_as = self.__gradient_conv_x_as_sample(weight=self.__w3,
-                #                                                                    sample_shape=self.__feature_conv2.shape,
-                #                                                                    next_grad=grad_output_conv3_as)
-                # # gradient矩阵变大/对到每个sample
-                # grad_output_conv2_relu_as = self.__gradient_maxpooling(mask=self.__maxpooling2_mask,next_grad=grad_output_conv2_maxpooling_as)
-                #
-                #
-                #
-                # grad_output_conv2_as= self.__gradient_relu(o = self.__feature_conv2_nopool,next_grad=grad_output_conv2_relu_as)
-                #
-                # gradient_w2 = self.__gradient_conv_weight(inputs=self.__feature_conv1,
-                #                                                 weight_shape=self.__w2.shape,
-                #                                                 next_grad=grad_output_conv2_as)
+            self.test(test_X, test_Y)
+        self.save_weight()
 
 
-                # grad_output_conv1_maxpooling_as = self.__gradient_conv_x_as_sample(weight=self.__w3,
-                #                                                                    sample_shape=self.__feature_conv1.shape,
-                #                                                                    next_grad=grad_output_conv3_as)
-                # # gradient矩阵变大/对到每个sample
-                # grad_output_conv1_relu_as = self.__gradient_maxpooling(mask = self.__maxpooling1_mask,
-                #                                                        next_grad=grad_output_conv1_maxpooling_as)
-                #
-                # grad_output_conv1_as = self.__gradient_relu(o=self.__feature_conv1_nopool,
-                #                                             next_grad=grad_output_conv1_relu_as)
-                #
-                # gradient_w1 = self.__gradient_conv_weight(inputs=batch_X,
-                #                                                 weight_shape=self.__w1.shape,
-                #                                                 next_grad=grad_output_conv1_as)
-                #
+    def infer(self,X):
+        with open('result.txt','w') as result:
+            print('predicting...')
+            batch_num = X.shape[0] // self._batch_size
+            final_batch = X.shape[0] % self._batch_size
+            for n in range(batch_num):
+                start = n * self._batch_size
+                end = (n + 1) * self._batch_size
+                batch_X = X[start:end]
+                r = np.argmax(self.__forward_pass(batch_X),axis=1)
+                for p in r:
+                    result.writelines(str(p)+'\n')
+            r = np.argmax(self.__forward_pass(X[-final_batch:]), axis=1)
+            for p in r:
+                result.writelines(str(p)+'\n')
+            print('done')
 
 
 
-
-                # print('gradient_dense')
-                # print(gradient_dense)
-                # print()
-                # print('gradient_w3')
-                # print(gradient_w3)
-                # print()
-                # print('gradient_w2')
-                # print(gradient_w3)
-                # print()
-                # print('gradient_w1')
-                # print(gradient_w3)
-                # print()
-                # print('learning rate')
-                # print(self._lr)
-
-                # self.__dense_w -= 0.0001 * self._lr * gradient_w_dense
-                # self.__w3 -= 0.0001 * gradient_w3
-                # self.__w2 -= 0.00001 * gradient_w2
-
-                # self.__w1 -= self._lr * gradient_w1
-                # self.__dense_w1 -= self._lr * gradient_dense_w1
-                # self.__dense_w2 -= self._lr * gradient_dense_w2
-
-
-
-
-    def infer(self):
-        batch_num = self._X // self._batch_size
-        for n in range(batch_num):
-            start = n * self._batch_size
-            end = (n + 1) * self._batch_size
-            batch_X = self._X[start:end]
-            pre = self.__forward_pass(batch_X)
 
 
 
@@ -359,23 +290,71 @@ class My_mnist():
 
 
     def load_weight(self):
-        pass
+        if os.path.isfile('my_mnist_weight.npz'):
+            with np.load('my_mnist_weight.npz') as weight_dict:
+                self.__w1 = weight_dict['conv_w1']
+                self.__dense_w2 = weight_dict['dense_w2']
+                self.__dense_w1 = weight_dict['dense_w1']
+
+        else:
+            print("Weight file not found, please rename file as my_mnist_weight.npy")
+
+
 
 
     def save_weight(self):
-        pass
+        """
+        self.__weight_list.append(self.__dense_w2)
+        self.__weight_list.append(self.__dense_w1)
+        self.__weight_list.append(self.__w1)
+        :return:
+        """
+        np.savez('my_mnist_weight',
+                 dense_w2 = self.__weight_list[0],
+                 dense_w1 = self.__weight_list[1],
+                 conv_w1 = self.__weight_list[2])
 
 
-test_img = './test_image.npy'
-test_label = './test_label.npy'
-train_img = './train_image.npy'
-train_label = './train_label.npy'
 
-X = np.load(train_img)
-Y = np.load(train_label)
-test_X = np.load(test_img)
-test_Y = np.load(test_label)
-model = My_mnist(X=X,Y=Y,test_X = test_X, test_Y = test_Y)
-model.train()
-# model.infer()
+
+def main(args):
+
+    test_img = './test_image.npy'
+    test_label = './test_label.npy'
+    train_img = './train_image.npy'
+    train_label = './train_label.npy'
+    X = np.load(train_img)
+    Y = np.load(train_label)
+    test_X = np.load(test_img)
+    test_Y = np.load(test_label)
+    model = My_mnist()
+
+
+    if args.train:
+        model.train(X = X,Y = Y,test_X = test_X,test_Y = test_Y,epoch =30,save=True)
+    elif args.infer:
+        model.load_weight()
+        model.infer(test_X)
+    elif args.test:
+        model.load_weight()
+        model.test(test_X,test_Y)
+    else:
+        print("Usage: Main.py [-train/infer/test]")
+
+
+
+
+
+
+    #model.infer(test_X)
+
+
+if __name__=='__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--train',action='store_true')
+    parser.add_argument('--infer', action='store_true')
+    parser.add_argument('--test', action='store_true')
+    args = parser.parse_args()
+    main(args)
+
 
